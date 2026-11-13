@@ -3,11 +3,12 @@
     <header class="page-head">
       <div>
         <h2>质量校验管理</h2>
-        <p class="page-desc">维护数据质量规则的输入、执行约束与结果记录，为质量校验提供可验证的数据工程流程。</p>
+        <p class="page-desc">
+          质量校验按行护照计算阻断：完整性、版本一致性、原始值指纹、缺席理由与异常率阈值共同决定护照包能否流转。
+        </p>
       </div>
       <div class="page-actions">
-        <button class="btn primary" type="button" @click="openCreate">登记质量规则</button>
-        <button class="btn" type="button" @click="exportRows">导出质量校验清单</button>
+        <button class="btn" type="button" @click="refresh">重新校验</button>
       </div>
     </header>
 
@@ -18,98 +19,160 @@
       </article>
     </div>
 
-    <p class="status-legend">
-      <span v-for="item in statusSummary" :key="item.status" class="legend-item">
-        {{ item.status }}：{{ item.count }}
-      </span>
+    <p class="hint" style="margin-bottom: 10px">
+      清洗规则行仍在此登记校验口径；阻断结论以下方护照包的计算结果为准，规则状态不参与判定。
     </p>
 
-    <form class="filter-bar" @submit.prevent="reload">
-      <label v-for="field in filterFields" :key="field" class="filter-item">
-        <span>{{ field }}</span>
-        <input v-model="filters[field]" :placeholder="`按${field}检索`" />
-      </label>
-      <button class="btn" type="submit">查询</button>
-      <button class="btn ghost" type="button" @click="resetFilters">重置条件</button>
-    </form>
-
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th v-for="column in columns" :key="column">{{ column }}</th>
-          <th>当前状态</th>
-          <th>可执行动作</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="row in rows" :key="String(row.id)">
-          <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
-          <td>{{ row.status }}</td>
-          <td class="row-actions">
-            <button
-              v-for="action in actions"
-              :key="action"
-              class="link"
-              type="button"
-              @click="runAction(action, row)"
-            >
-              {{ action }}
-            </button>
-          </td>
-        </tr>
-        <tr v-if="!rows.length">
-          <td :colspan="columns.length + 2" class="empty-state">暂无质量校验数据，可先登记质量规则</td>
-        </tr>
-      </tbody>
-    </table>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th v-for="column in columns" :key="column">{{ column }}</th>
+            <th>当前状态</th>
+            <th>可执行动作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in rows" :key="String(row.id)" :class="{ 'row-selected': Number(row.id) === focusRuleId }" style="cursor: pointer" @click="focusRuleId = Number(row.id)">
+            <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+            <td>{{ row.status }}</td>
+            <td class="row-actions" @click.stop>
+              <button v-for="action in actions" :key="action" class="link" type="button" @click="runAction(action, row)">
+                {{ action }}
+              </button>
+            </td>
+          </tr>
+          <tr v-if="!rows.length">
+            <td :colspan="columns.length + 2" class="empty-state">暂无质量校验数据</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
     <footer class="page-foot">
-      <span>共 {{ total }} 条质量校验记录</span>
+      <span>共 {{ total }} 条质量规则</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
+
+    <section class="panel" style="margin-top: 18px">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">护照包质量校验</h3>
+          <p class="hint" style="margin: 4px 0 0">每一行的通过/阻断都能追溯到判定码与缺席理由。</p>
+        </div>
+        <div class="tag-row">
+          <span class="badge mute">全部护照包 {{ summary.total }}</span>
+          <span class="badge ok">通过 {{ summary.passed }}</span>
+          <span class="badge bad">阻断 {{ summary.blocked }}</span>
+          <span class="badge warn">未盖章 {{ summary.missingRows }} 行</span>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table small-table">
+          <thead>
+            <tr>
+              <th>护照号</th><th>清洗规则</th><th>清洗版本</th><th>样本</th><th>异常率 / 阈值</th>
+              <th>结论</th><th>阻断原因</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="item in qualityRows"
+              :key="item.passport.passportNo"
+              :class="{ 'row-selected': item.passport.passportNo === expandedNo }"
+              style="cursor: pointer"
+              @click="expandedNo = item.passport.passportNo"
+            >
+              <td class="mono">{{ item.passport.passportNo }}</td>
+              <td>{{ item.passport.ruleCode }}</td>
+              <td>{{ item.passport.ruleVersion }}</td>
+              <td>{{ item.passport.totalRows }} 行</td>
+              <td class="mono">
+                {{ (item.verdict.anomalyRate * 100).toFixed(1) }}% /
+                {{ (item.passport.conditionCard.thresholds.abnormalRate * 100).toFixed(1) }}%
+              </td>
+              <td>
+                <span class="badge" :class="item.verdict.blocked ? 'bad' : 'ok'">{{ item.verdict.blocked ? '阻断' : '通过' }}</span>
+              </td>
+              <td>{{ item.verdict.reasons.join('；') || '—' }}</td>
+              <td>
+                <span v-if="item.accepted" class="badge ok">已接收</span>
+                <span v-else class="badge mute">未接收</span>
+              </td>
+            </tr>
+            <tr v-if="!qualityRows.length">
+              <td colspan="8" class="empty-state">还没有护照包，先在清洗加工页处理样本</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <template v-if="expanded">
+        <div class="grid-2" style="margin-top: 12px">
+          <section class="panel" style="margin: 0">
+            <h4 class="panel-title">逐项校验</h4>
+            <ul class="check-list">
+              <li v-for="check in expanded.verdict.checks" :key="check.key">
+                <span class="check-dot" :class="check.result === 'pass' ? 'ok' : check.result === 'warn' ? 'warn' : 'bad'"></span>
+                <span>
+                  <strong>{{ check.label }}</strong>：{{ check.detail }}
+                  <span v-if="check.metric" class="hint">（{{ check.metric }} {{ check.value }}，要求 {{ check.bound }}）</span>
+                </span>
+              </li>
+            </ul>
+          </section>
+          <section class="panel" style="margin: 0">
+            <h4 class="panel-title">条件卡（随包固化）</h4>
+            <ConditionCardView :card="expanded.passport.conditionCard" />
+          </section>
+        </div>
+      </template>
+    </section>
   </section>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
-import {
-  downloadEntries,
-  listEntries,
-  moduleMeta,
-  runAction as applyAction,
-} from '@/api/local-service'
+import ConditionCardView from '@/components/passport/ConditionCardView.vue'
+import { ensureCleanseSeed } from '@/api/cleanse-service'
+import { listQualityByPassports, qualitySummary } from '@/api/quality-service'
+import { listEntries, moduleMeta, runAction as applyAction } from '@/api/local-service'
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('quality')
 const columns = ["规则编号", "校验表名", "目标字段", "校验表达式", "阈值下界", "阈值上界", "采样比例", "阻断级别"]
 const actions = ["提交校验", "启用规则", "停用规则"]
-const statuses = ["草稿", "待校验", "已启用", "已停用"]
-const stats = [{"label": "质量规则总数", "value": 0}, {"label": "已启用规则", "value": 0}, {"label": "待校验规则", "value": 0}]
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
 const errorMessage = ref('')
-const filters = ref<Record<string, string>>({})
-const filterFields = columns.slice(0, 3)
-const statusSummary = computed(() =>
-  statuses.map((status: string) => ({
-    status,
-    count: rows.value.filter((row) => String(row.status) === status).length,
-  })),
-)
+const focusRuleId = ref<number | null>(null)
+const expandedNo = ref('')
+const refreshTick = ref(0)
 
-function resetFilters() {
-  filters.value = {}
-  reload()
-}
+const summary = computed(() => {
+  void refreshTick.value
+  return qualitySummary()
+})
+const qualityRows = computed(() => {
+  void refreshTick.value
+  return listQualityByPassports()
+})
+const expanded = computed(() => {
+  void refreshTick.value
+  return qualityRows.value.find((item) => item.passport.passportNo === expandedNo.value) ?? null
+})
+const stats = computed(() => [
+  { label: '护照包总数', value: summary.value.total },
+  { label: '通过护照包', value: summary.value.passed },
+  { label: '阻断护照包', value: summary.value.blocked },
+])
 
-function exportRows() {
-  downloadEntries(meta.key)
-}
-
-function openCreate() {
-  errorMessage.value = '质量规则登记入口尚未接入审批流'
+function refresh() {
+  refreshTick.value += 1
+  errorMessage.value = ''
 }
 
 function runAction(action: string, row: EntryRow) {
@@ -117,15 +180,13 @@ function runAction(action: string, row: EntryRow) {
   const result = applyAction(meta.key, Number(row.id), action)
   if (!result.ok) {
     errorMessage.value = result.message
-    return
   }
-  reload()
+  refresh()
 }
 
 function reload() {
-  errorMessage.value = ''
   try {
-    const payload = listEntries(meta.key, filters.value)
+    const payload = listEntries(meta.key)
     rows.value = payload.items
     total.value = payload.total
   } catch (error) {
@@ -133,5 +194,9 @@ function reload() {
   }
 }
 
-onMounted(reload)
+onMounted(() => {
+  ensureCleanseSeed()
+  reload()
+  refresh()
+})
 </script>

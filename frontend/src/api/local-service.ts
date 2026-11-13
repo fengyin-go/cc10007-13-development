@@ -1,3 +1,4 @@
+import { resetPassports } from '@/data/cleanse-ledger'
 import { MODULE_BY_KEY } from '@/data/modules'
 import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
@@ -58,6 +59,11 @@ export function runAction(key: string, id: number, action: string): ActionResult
 
 export function resetModule(key: string): PageResult {
   resetRows(key)
+  // 清洗加工的状态流转与护照台账分开存：重置该模块时两者一起回到示例态，
+  // 下次打开清洗加工页会按新规则行重新播种护照样例。
+  if (key === 'cleanse') {
+    resetPassports()
+  }
   return listEntries(key)
 }
 
